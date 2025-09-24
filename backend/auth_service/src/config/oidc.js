@@ -1,5 +1,4 @@
-import pkg from "openid-client";
-const { Issuer } = pkg;
+import { Issuer } from "openid-client";
 
 let clients = {};
 

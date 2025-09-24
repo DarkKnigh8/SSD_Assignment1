@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { searchRestaurants } from "../services/api"; // Import the search API function
 
@@ -7,11 +7,26 @@ const Header = () => {
   const [dropdownVisible, setDropdownVisible] = useState(false);
   const [query, setQuery] = useState('');
   const [searchResults, setSearchResults] = useState(null);
+  const [user, setUser] = useState(null);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const userData = localStorage.getItem('user');
+    if (token && userData) {
+      try {
+        setUser(JSON.parse(userData));
+      } catch (e) {
+        console.error('Error parsing user data:', e);
+      }
+    }
+  }, []);
 
   const toggleDropdown = () => setDropdownVisible(!dropdownVisible);
 
   const handleSignOut = () => {
     localStorage.removeItem("token");
+    localStorage.removeItem("user");
+    setUser(null);
     window.location.href = "/login";
   };
 
@@ -98,21 +113,32 @@ const Header = () => {
               {dropdownVisible && (
                 <div className="absolute right-0 mt-2 w-48 bg-white shadow-lg rounded-md">
                   <div className="py-2">
-                    <Link to="/orders" className="block px-4 py-2 text-gray-800 hover:bg-gray-200">
-                      My Orders
-                    </Link>
-                    <Link to="/login" className="block px-4 py-2 text-gray-800 hover:bg-gray-200">
-                      Login
-                    </Link>
-                    <Link to="/register" className="block px-4 py-2 text-gray-800 hover:bg-gray-200">
-                      Sign Up
-                    </Link>
-                    <button
-                      onClick={handleSignOut}
-                      className="block w-full text-left px-4 py-2 text-gray-800 hover:bg-gray-200"
-                    >
-                      Sign Out
-                    </button>
+                    {user ? (
+                      <>
+                        <div className="px-4 py-2 border-b">
+                          <p className="text-sm font-semibold text-gray-800">{user.name || user.email}</p>
+                          <p className="text-xs text-gray-500">{user.role}</p>
+                        </div>
+                        <Link to="/orders" className="block px-4 py-2 text-gray-800 hover:bg-gray-200">
+                          My Orders
+                        </Link>
+                        <button
+                          onClick={handleSignOut}
+                          className="block w-full text-left px-4 py-2 text-gray-800 hover:bg-gray-200"
+                        >
+                          Sign Out
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <Link to="/login" className="block px-4 py-2 text-gray-800 hover:bg-gray-200">
+                          Login
+                        </Link>
+                        <Link to="/register" className="block px-4 py-2 text-gray-800 hover:bg-gray-200">
+                          Sign Up
+                        </Link>
+                      </>
+                    )}
                   </div>
                 </div>
               )}

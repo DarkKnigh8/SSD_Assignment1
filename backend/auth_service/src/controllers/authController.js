@@ -311,15 +311,10 @@
 //   }
 // };
 
-// backend/auth_service/controllers/authController.js
+// src/controllers/authController.js
 import User from '../models/User.js';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { getOidcClient } from '../config/oidc.js';
-import * as openid from 'openid-client';
-const { generators } = openid;
-
-import { putState, getState } from '../utils/stateStore.js';
 
 /**
  * ======================
@@ -398,11 +393,6 @@ export const login = async (req, res) => {
   }
 };
 
-/**
- * ======================
- * Get all delivery drivers
- * ======================
- */
 export const getAllDrivers = async (req, res) => {
   try {
     const drivers = await User.find({ role: 'delivery' });
@@ -413,177 +403,5 @@ export const getAllDrivers = async (req, res) => {
   } catch (err) {
     console.error('[AUTH ERROR] Get Drivers:', err.message);
     res.status(500).json({ message: 'Failed to fetch drivers' });
-  }
-};
-
-/**
- * ======================
- * OIDC: Authorization Code + PKCE
- * ======================
- */
-
-// GET /oauth/login/:provider
-export const oauthLogin = async (req, res) => {
-  try {
-    const { provider } = req.params;
-    console.log(`[OAUTH] Login request for provider: ${provider}`);
-
-    const issuerUrl =
-      provider === 'google'
-        ? process.env.OIDC_ISSUER || 'https://accounts.google.com'
-        : process.env.OIDC_ISSUER;
-
-    console.log('[OAUTH] Using issuer URL:', issuerUrl);
-
-    const client = await getOidcClient({
-      issuerUrl,
-      client_id: process.env.OIDC_CLIENT_ID,
-      client_secret: process.env.OIDC_CLIENT_SECRET,
-      redirect_uris: [process.env.OIDC_REDIRECT_URI],
-    });
-
-    const code_verifier = generators.codeVerifier();
-    const code_challenge = generators.codeChallenge(code_verifier);
-    const state = generators.state();
-    const nonce = generators.nonce();
-
-    // store tx (replace with Redis in prod)
-    putState(state, {
-      provider,
-      issuerUrl,
-      code_verifier,
-      nonce,
-      createdAt: Date.now(),
-    });
-
-    const authorizationUrl = client.authorizationUrl({
-      scope: process.env.OIDC_SCOPES || 'openid email profile',
-      response_type: 'code',
-      code_challenge,
-      code_challenge_method: 'S256',
-      state,
-      nonce,
-    });
-
-    console.log('[OAUTH] Redirecting to:', authorizationUrl);
-    return res.redirect(authorizationUrl);
-  } catch (err) {
-    console.error('[AUTH ERROR] oauthLogin:', err.message, err.stack);
-    return res.status(500).json({
-      message: 'Failed to initiate OAuth login',
-      error: err.message,
-    });
-  }
-};
-
-// GET /oauth/callback/:provider
-export const oauthCallback = async (req, res) => {
-  try {
-    const { provider } = req.params;
-    const { state, code } = req.query;
-
-    console.log(`[OAUTH] Callback from ${provider}, state=${state}, code=${code ? 'present' : 'missing'}`);
-
-    if (!state || !code) {
-      return res.status(400).json({ message: 'Missing state or code' });
-    }
-
-    const tx = getState(state);
-    if (!tx) {
-      return res.status(400).json({ message: 'Invalid or expired state' });
-    }
-
-    const { issuerUrl, code_verifier, nonce } = tx;
-    console.log('[OAUTH] Retrieved stored transaction for state', state);
-
-    const client = await getOidcClient({
-      issuerUrl,
-      client_id: process.env.OIDC_CLIENT_ID,
-      client_secret: process.env.OIDC_CLIENT_SECRET,
-      redirect_uris: [process.env.OIDC_REDIRECT_URI],
-    });
-
-    const params = client.callbackParams(req);
-    console.log('[OAUTH] Callback params parsed:', params);
-
-    const tokenSet = await client.callback(process.env.OIDC_REDIRECT_URI, params, {
-      code_verifier,
-      state,
-      nonce,
-    });
-
-    console.log('[OAUTH] TokenSet received:', tokenSet);
-
-    const claims = tokenSet.claims();
-    console.log('[OAUTH] Claims:', claims);
-
-    const sub = claims.sub;
-    const email = claims.email;
-    const emailVerified = !!claims.email_verified;
-    const picture = claims.picture;
-    const name = claims.name || email || 'User';
-
-    // Find or create user
-    let user = await User.findOne({
-      identities: { $elemMatch: { provider, providerId: sub } },
-    });
-
-    if (!user) {
-      if (email && emailVerified) {
-        user = await User.findOne({ email });
-      }
-
-      if (user) {
-        console.log('[OAUTH] Linking new identity to existing user', user.email);
-        user.identities.push({
-          provider,
-          providerId: sub,
-          email,
-          emailVerified,
-          picture,
-          lastLoginAt: new Date(),
-        });
-        if (!user.name && name) user.name = name;
-        await user.save();
-      } else {
-        console.log('[OAUTH] Creating new OAuth user for', email);
-        user = new User({
-          name,
-          email: email || `no-email+${provider}:${sub}@example.local`,
-          role: 'customer',
-          identities: [
-            {
-              provider,
-              providerId: sub,
-              email,
-              emailVerified,
-              picture,
-              lastLoginAt: new Date(),
-            },
-          ],
-        });
-        await user.save();
-      }
-    } else {
-      console.log('[OAUTH] Existing user found, updating login time');
-      const idRef = user.identities.find(
-        (i) => i.provider === provider && i.providerId === sub
-      );
-      if (idRef) idRef.lastLoginAt = new Date();
-      await user.save();
-    }
-
-    const token = signAppToken(user);
-
-    console.log('[OAUTH] Issued app token for user', user.email);
-
-    return res.json({
-      message: 'OAuth login successful',
-      token,
-      user,
-    });
-  } catch (err) {
-    console.error('[AUTH ERROR] oauthCallback:', err.message, err.stack);
-    return res.status(500).json({ message: 'OAuth callback failed', error: err.message });
   }
 };
